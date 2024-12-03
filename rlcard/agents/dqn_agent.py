@@ -163,7 +163,7 @@ class DQNAgent(object):
         Returns:
             action (int): selected action
         """
-        legal_actions = list(state['legal_actions'].keys())
+        legal_actions = [int(action) for action in state['legal_actions'].keys()]
         print(f"Legal actions: {legal_actions}")
     
         if np.random.rand() < epsilon:  # Exploration

@@ -212,7 +212,7 @@ class DQNAgent(object):
         epsilon = self.epsilons[min(self.total_t, len(self.epsilons) - 1)]
         with torch.no_grad():
           state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
-          q_values = self.qnetwork(state_tensor).cpu().numpy()
+          q_values = self.qnetwork(state_tensor).cpu().numpy()[0]
         return q_values, epsilon
 
     def train(self):

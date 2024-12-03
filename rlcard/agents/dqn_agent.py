@@ -22,18 +22,21 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+SOFTWARE.  
 '''
 
-import os
+import os 
 import random
 import numpy as np
 import torch
 import torch.nn as nn
 from collections import namedtuple
 from copy import deepcopy
+import torch.nn.functional as F
 
 from rlcard.utils.utils import remove_illegal
+from torch.optim.optimizer import Kwargs
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 Transition = namedtuple('Transition', ['state', 'action', 'reward', 'next_state', 'done', 'legal_actions'])
 
@@ -44,6 +47,8 @@ class DQNAgent(object):
     that depends on PyTorch instead of Tensorflow
     '''
     def __init__(self,
+                 state_size, #added  
+                 action_size, #added 
                  replay_memory_size=20000,
                  replay_memory_init_size=100,
                  update_target_estimator_every=1000,
@@ -52,14 +57,15 @@ class DQNAgent(object):
                  epsilon_end=0.1,
                  epsilon_decay_steps=20000,
                  batch_size=32,
-                 num_actions=2,
-                 state_shape=None,
+                 #num_actions=2,
+                 #state_shape=None,
                  train_every=1,
-                 mlp_layers=None,
+                 #mlp_layers=None,
                  learning_rate=0.00005,
                  device=None,
                  save_path=None,
-                 save_every=float('inf'),):
+                 save_every=float('inf'),
+                 **Kwargs): #added 
 
         '''
         Q-Learning algorithm for off-policy TD control using Function Approximation.
@@ -87,13 +93,15 @@ class DQNAgent(object):
             save_path (str): The path to save the model checkpoints
             save_every (int): Save the model every X training steps
         '''
-        self.use_raw = False
+        self.state_size = state_size #added 
+        self.action_size = action_size #added 
+        #self.use_raw = False
         self.replay_memory_init_size = replay_memory_init_size
         self.update_target_estimator_every = update_target_estimator_every
         self.discount_factor = discount_factor
         self.epsilon_decay_steps = epsilon_decay_steps
         self.batch_size = batch_size
-        self.num_actions = num_actions
+        #self.num_actions = num_actions
         self.train_every = train_every
 
         # Torch device
@@ -112,10 +120,15 @@ class DQNAgent(object):
         self.epsilons = np.linspace(epsilon_start, epsilon_end, epsilon_decay_steps)
 
         # Create estimators
-        self.q_estimator = Estimator(num_actions=num_actions, learning_rate=learning_rate, state_shape=state_shape, \
-            mlp_layers=mlp_layers, device=self.device)
-        self.target_estimator = Estimator(num_actions=num_actions, learning_rate=learning_rate, state_shape=state_shape, \
-            mlp_layers=mlp_layers, device=self.device)
+        #self.q_estimator = Estimator(num_actions=num_actions, learning_rate=learning_rate, state_shape=state_shape, \
+        #    mlp_layers=mlp_layers, device=self.device)
+        #self.target_estimator = Estimator(num_actions=num_actions, learning_rate=learning_rate, state_shape=state_shape, \
+        #    mlp_layers=mlp_layers, device=self.device)
+
+        #adding in the Q and Target Network Initialization
+        self.qnetwork = QNetwork(state_size, action_size, 64, 64, 64).to(self.device) #added 
+        self.tnetwork = TargetNetwork(state_size, action_size, 64, 64, 64).to(self.device) #added 
+        self.optimizer = torch.optim.RMSprop(self.qnetwork.parameters(), lr=learning_rate) #added 
 
         # Create replay memory
         self.memory = Memory(replay_memory_size, batch_size)
@@ -187,18 +200,24 @@ class DQNAgent(object):
             q_values (numpy.array): a 1-d array where each entry represents a Q value
         '''
         
-        q_values = self.q_estimator.predict_nograd(np.expand_dims(state['obs'], 0))[0]
-        masked_q_values = -np.inf * np.ones(self.num_actions, dtype=float)
-        legal_actions = list(state['legal_actions'].keys())
-        masked_q_values[legal_actions] = q_values[legal_actions]
+        #q_values = self.q_estimator.predict_nograd(np.expand_dims(state['obs'], 0))[0]
+        #masked_q_values = -np.inf * np.ones(self.num_actions, dtype=float)
+        #legal_actions = list(state['legal_actions'].keys())
+        #masked_q_values[legal_actions] = q_values[legal_actions]
 
-        return masked_q_values
+        #return masked_q_values
+        epsilon = self.epsilons[min(self.total_t, len(self.epsilons) - 1)]
+        with torch.no_grad():
+          state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
+          q_values = self.qnetwork(state_tensor).cpu().numpy()
+        return q_values, epsilon
 
     def train(self):
         ''' Train the network
 
         Returns:
             loss (float): The loss of the current batch.
+        '''
         '''
         state_batch, action_batch, reward_batch, next_state_batch, done_batch, legal_actions_batch = self.memory.sample()
 
@@ -235,6 +254,30 @@ class DQNAgent(object):
             # add another argument to the function call parameterized by self.train_t
             self.save_checkpoint(self.save_path)
             print("\nINFO - Saved model checkpoint.")
+        '''
+        if len(self.memory) < self.replay_memory_init_size:
+          return
+
+        self.qnetwork.reset_noise()
+        self.tnetwork.reset_noise()
+
+        states, actions, rewards, next_states, dones = self.memory.sample()
+
+        with torch.no_grad():
+            next_actions = self.qnetwork(next_states).argmax(dim=1, keepdim=True)
+            q_targets_next = self.tnetwork(next_states).gather(1, next_actions)
+            q_targets = rewards + (self.discount_factor * q_targets_next * (1 - dones))
+
+        q_values = self.qnetwork(states).gather(1, actions)
+
+        loss = F.mse_loss(q_values, q_targets)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        if self.total_t % self.update_target_estimator_every == 0:
+            self.tnetwork.load_state_dict(self.qnetwork.state_dict())
 
 
     def feed_memory(self, state, action, reward, next_state, legal_actions, done):
@@ -455,20 +498,12 @@ class Estimator(object):
         estimator.optimizer.load_state_dict(checkpoint['optimizer'])
         return estimator
 
-
+'''
 class EstimatorNetwork(nn.Module):
-    ''' The function approximation network for Estimator
-        It is just a series of tanh layers. All in/out are torch.tensor
-    '''
+  
 
     def __init__(self, num_actions=2, state_shape=None, mlp_layers=None):
-        ''' Initialize the Q network
-
-        Args:
-            num_actions (int): number of legal actions
-            state_shape (list): shape of state tensor
-            mlp_layers (list): output size of each fc layer
-        '''
+       
         super(EstimatorNetwork, self).__init__()
 
         self.num_actions = num_actions
@@ -486,12 +521,122 @@ class EstimatorNetwork(nn.Module):
         self.fc_layers = nn.Sequential(*fc)
 
     def forward(self, s):
-        ''' Predict action values
-
-        Args:
-            s  (Tensor): (batch, state_shape)
-        '''
+       
         return self.fc_layers(s)
+
+'''
+#adding in the noisy DQN code with Qnetwork and Target Network 
+class NoisyLinear(nn.Module):
+    def __init__(self, in_features, out_features, sigma_init=0.5):
+        super(NoisyLinear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.sigma_init = sigma_init
+
+        # Learnable parameters
+        self.weight_mu = nn.Parameter(torch.empty(out_features, in_features))
+        self.weight_sigma = nn.Parameter(torch.empty(out_features, in_features))
+        self.bias_mu = nn.Parameter(torch.empty(out_features))
+        self.bias_sigma = nn.Parameter(torch.empty(out_features))
+
+        # Fixed noise parameters
+        self.register_buffer("weight_epsilon", torch.empty(out_features, in_features))
+        self.register_buffer("bias_epsilon", torch.empty(out_features))
+
+        # Initialization
+        self.reset_parameters()
+        self.reset_noise()
+
+    def reset_parameters(self):
+        bound = 1 / np.sqrt(self.in_features)
+        self.weight_mu.data.uniform_(-bound, bound)
+        self.bias_mu.data.uniform_(-bound, bound)
+        self.weight_sigma.data.fill_(self.sigma_init / np.sqrt(self.in_features))
+        self.bias_sigma.data.fill_(self.sigma_init / np.sqrt(self.out_features))
+
+    def reset_noise(self):
+        self.weight_epsilon.normal_()
+        self.bias_epsilon.normal_()
+    def forward(self, x):
+        if self.training:
+            weight = self.weight_mu + self.weight_sigma * self.weight_epsilon
+            bias = self.bias_mu + self.bias_sigma * self.bias_epsilon
+        return F.linear(x, weight, bias)
+
+# Simple NN with two hidden layers
+class QNetwork(nn.Module):
+    def __init__(self, s_size,  a_size, fc1_units=64, fc2_units=64, fc3_units=64):
+    #def __init__(self, s_size,  a_size, fc1_units=256, fc2_units=128):
+        super(QNetwork, self).__init__()
+        self.fc1 = nn.Linear(s_size, fc1_units)
+        self.fc2 = NoisyLinear(fc1_units, fc2_units)
+        self.fc3 = NoisyLinear(fc2_units, fc3_units)
+        self.value_layer = NoisyLinear(fc3_units, 1)
+        self.advantage_layer = NoisyLinear(fc3_units, a_size)
+        #self.fc3 = nn.Linear(fc2_units, fc3_units)
+        #self.fc4 = nn.Linear(fc3_units, a_size)
+    def forward(self, state):
+        """Perform forward propagation."""
+
+        x = state
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x,
+                             device=device,
+                             dtype=torch.float32)
+            x = x.unsqueeze(0)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        value = self.value_layer(x)
+        advantage = self.advantage_layer(x)
+        q_values = value + (advantage - advantage.mean(dim=1, keepdim=True))
+        return q_values
+
+        #x = self.fc4(x)
+        #x = self.fc3(x)
+
+
+
+    def reset_noise(self):
+        self.value_layer.reset_noise()
+        self.advantage_layer.reset_noise()
+
+class TargetNetwork(nn.Module):
+    def __init__(self, s_size,  a_size, fc1_units=64, fc2_units=64, fc3_units=64):
+    #def __init__(self, s_size,  a_size, fc1_units=256, fc2_units=128):
+        super(TargetNetwork, self).__init__()
+        self.fc1 = nn.Linear(s_size, fc1_units)
+        self.fc2 = NoisyLinear(fc1_units, fc2_units)
+        self.fc3 = NoisyLinear(fc2_units, fc3_units)
+        self.value_layer = NoisyLinear(fc3_units, 1)
+        self.advantage_layer = NoisyLinear(fc3_units, a_size)
+        #self.fc3 = nn.Linear(fc2_units, fc3_units)
+        #self.fc4 = nn.Linear(fc3_units, a_size)
+
+    def forward(self, state):
+        """Perform forward propagation."""
+
+        x = state
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x,
+                             device=device,
+                             dtype=torch.float32)
+            x = x.unsqueeze(0)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        #x = self.fc4(x)
+        #x = self.fc3(x)
+        value = self.value_layer(x)
+        advantage = self.advantage_layer(x)
+        q_values = value + (advantage - advantage.mean(dim=1, keepdim=True))
+        return q_values
+
+
+    def reset_noise(self):
+        self.value_layer.reset_noise()
+        self.advantage_layer.reset_noise()
+
 
 class Memory(object):
     ''' Memory for saving transitions

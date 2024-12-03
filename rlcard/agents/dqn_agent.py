@@ -232,7 +232,7 @@ class DQNAgent(object):
         info = {
             'values': {a: float(q_values[a]) for a in legal_actions}
         }
-        return action, info
+        return best_action, info
 
     def predict(self, state):
         ''' Predict the masked Q-values

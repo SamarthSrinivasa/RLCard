@@ -163,16 +163,24 @@ class DQNAgent(object):
         Returns:
             action (int): selected action
         """
-        self.qnetwork.reset_noise()
-        with torch.no_grad():
-            # Convert state to a tensor if not already
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
-            q_values = self.qnetwork(state_tensor).cpu().detach().numpy().squeeze()
+        legal_actions = list(state['legal_actions'].keys())
+        print(f"Legal actions: {legal_actions}")
     
         if np.random.rand() < epsilon:  # Exploration
-            return np.random.choice(self.action_size)
+            # Randomly choose from legal actions
+            return np.random.choice(legal_actions)
         else:  # Exploitation
-            return np.argmax(q_values)
+            with torch.no_grad():
+                state_tensor = torch.tensor(state['obs'], dtype=torch.float32).unsqueeze(0).to(self.device)
+                q_values = self.qnetwork(state_tensor).cpu().detach().numpy().squeeze()
+    
+            # Mask Q-values for illegal actions
+            masked_q_values = np.full_like(q_values, -np.inf)
+            for action in legal_actions:
+                masked_q_values[action] = q_values[action]
+    
+            # Select the best legal action
+            return np.argmax(masked_q_values)
 
     def step(self, state):
         ''' Predict the action for genrating training data but

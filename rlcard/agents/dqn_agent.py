@@ -681,4 +681,9 @@ class Memory(object):
         instance = cls(checkpoint['memory_size'], checkpoint['batch_size'])
         instance.memory = checkpoint['memory']
         return instance
+    '''added len memory to get current size of memory'''
+    def __len__(self):
+        ''' Return the current size of the memory '''
+        return len(self.memory)
+    
 

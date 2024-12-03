@@ -169,11 +169,14 @@ class DQNAgent(object):
             # Convert state to a tensor if not already
             state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
             q_values = self.qnetwork(state_tensor).cpu().detach().numpy().squeeze()
+            print(f"Q-values: {q_values} (shape: {q_values.shape})")
+            print(f"Legal actions: {legal_actions}")
             
         masked_q_values = np.full_like(q_values, -np.inf)
         for action in legal_actions:
             masked_q_values[action] = q_values[action]
-            
+        print(f"Masked Q-values: {masked_q_values}")
+
         if np.random.rand() < epsilon:  # Exploration
             return np.random.choice(legal_actions)
         else:  # Exploitation

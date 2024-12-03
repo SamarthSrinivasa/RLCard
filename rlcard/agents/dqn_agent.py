@@ -169,12 +169,15 @@ class DQNAgent(object):
             # Convert state to a tensor if not already
             state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
             q_values = self.qnetwork(state_tensor).cpu().detach().numpy().squeeze()
-    
+            
+        masked_q_values = np.full_like(q_values, -np.inf)
+        for action in legal_actions:
+            masked_q_values[action] = q_values[action]
+            
         if np.random.rand() < epsilon:  # Exploration
             return np.random.choice(legal_actions)
         else:  # Exploitation
-            best_action = np.argmax(q_values)
-            return best_action if best_action in legal_actions else np.random.choice(legal_actions)
+            return np.argmax(masked_q_values)
 
     def step(self, state):
         ''' Predict the action for genrating training data but

@@ -162,6 +162,9 @@ class DQNAgent(object):
         Returns:
             action (int): an action id
         '''
+        observation = state['obs']
+    
+        q_values, epsilon = self.predict(observation)
         q_values = self.predict(state)
         epsilon = self.epsilons[min(self.total_t, self.epsilon_decay_steps-1)]
         legal_actions = list(state['legal_actions'].keys())

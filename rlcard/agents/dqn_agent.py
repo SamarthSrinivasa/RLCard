@@ -152,6 +152,28 @@ class DQNAgent(object):
         if tmp>=0 and tmp%self.train_every == 0:
             self.train()
 
+    def epsilon_greedy_action(self, state, epsilon):
+        """
+        Returns an action for the given state using the epsilon-greedy strategy.
+    
+        Args:
+            state (array_like): current state
+            epsilon (float): exploration rate
+    
+        Returns:
+            action (int): selected action
+        """
+        self.qnetwork.reset_noise()
+        with torch.no_grad():
+            # Convert state to a tensor if not already
+            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
+            q_values = self.qnetwork(state_tensor).cpu().detach().numpy().squeeze()
+    
+        if np.random.rand() < epsilon:  # Exploration
+            return np.random.choice(self.action_size)
+        else:  # Exploitation
+            return np.argmax(q_values)
+
     def step(self, state):
         ''' Predict the action for genrating training data but
             have the predictions disconnected from the computation graph
@@ -161,7 +183,7 @@ class DQNAgent(object):
 
         Returns:
             action (int): an action id
-        '''
+        
         observation = state['obs']
     
         q_values, epsilon = self.predict(observation)
@@ -173,6 +195,10 @@ class DQNAgent(object):
         action_idx = np.random.choice(np.arange(len(probs)), p=probs)
 
         return legal_actions[action_idx]
+        '''
+        observation = state['obs']
+        epsilon = self.epsilons[min(self.total_t, self.epsilon_decay_steps - 1)]
+        return self.epsilon_greedy_action(observation, epsilon)
 
     def eval_step(self, state):
         ''' Predict the action for evaluation purpose.
@@ -183,7 +209,7 @@ class DQNAgent(object):
         Returns:
             action (int): an action id
             info (dict): A dictionary containing information
-        '''
+        
         q_values = self.predict(state)
         best_action = np.argmax(q_values)
 
@@ -191,6 +217,16 @@ class DQNAgent(object):
         info['values'] = {state['raw_legal_actions'][i]: float(q_values[list(state['legal_actions'].keys())[i]]) for i in range(len(state['legal_actions']))}
 
         return best_action, info
+        '''
+        observation = state['obs']
+        action = self.epsilon_greedy_action(observation, epsilon=0)  # Greedy policy
+        with torch.no_grad():
+            q_values = self.qnetwork(torch.tensor(observation, dtype=torch.float32).unsqueeze(0).to(self.device)).cpu().numpy().squeeze()
+    
+        info = {
+            'values': {state['raw_legal_actions'][i]: float(q_values[list(state['legal_actions'].keys())[i]]) for i in range(len(state['legal_actions']))}
+        }
+        return action, info
 
     def predict(self, state):
         ''' Predict the masked Q-values

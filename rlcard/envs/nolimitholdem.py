@@ -9,7 +9,7 @@ from rlcard.games.nolimitholdem import Game
 from rlcard.games.nolimitholdem.round import Action
 
 DEFAULT_GAME_CONFIG = {
-        'game_num_players': 2,
+        'game_num_players': 4,
         'chips_for_each': 100,
         'dealer_id': None,
         }

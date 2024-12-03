@@ -164,15 +164,17 @@ class DQNAgent(object):
             action (int): selected action
         """
         self.qnetwork.reset_noise()
+        legal_actions = list(state['legal_actions'].keys())
         with torch.no_grad():
             # Convert state to a tensor if not already
             state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
             q_values = self.qnetwork(state_tensor).cpu().detach().numpy().squeeze()
     
         if np.random.rand() < epsilon:  # Exploration
-            return np.random.choice(self.action_size)
+            return np.random.choice(legal_actions)
         else:  # Exploitation
-            return np.argmax(q_values)
+            best_action = np.argmax(q_values)
+            return best_action if best_action in legal_actions else np.random.choice(legal_actions)
 
     def step(self, state):
         ''' Predict the action for genrating training data but
@@ -219,12 +221,16 @@ class DQNAgent(object):
         return best_action, info
         '''
         observation = state['obs']
-        action = self.epsilon_greedy_action(observation, epsilon=0)  # Greedy policy
+        legal_actions = list(state['legal_actions'].keys())
+        #action = self.epsilon_greedy_action(observation, epsilon=0)  # Greedy policy
         with torch.no_grad():
             q_values = self.qnetwork(torch.tensor(observation, dtype=torch.float32).unsqueeze(0).to(self.device)).cpu().numpy().squeeze()
-    
+        best_action = np.argmax(q_values)
+        if best_action not in legal_actions:
+            best_action = np.random.choice(legal_actions)
+            
         info = {
-            'values': {state['raw_legal_actions'][i]: float(q_values[list(state['legal_actions'].keys())[i]]) for i in range(len(state['legal_actions']))}
+            'values': {a: float(q_values[a]) for a in legal_actions}
         }
         return action, info
 

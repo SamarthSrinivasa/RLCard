@@ -122,7 +122,7 @@ class NolimitholdemRound:
 
         while players[self.game_pointer].status == PlayerStatus.FOLDED:
             if folded_count == len(players):
-            print("All players have folded. Ending round or game.")
+                print("All players have folded. Ending round or game.")
                 break
             self.game_pointer = (self.game_pointer + 1) % self.num_players
 

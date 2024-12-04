@@ -108,7 +108,7 @@ class NolimitholdemRound:
 
         if player.remained_chips == 0 and player.status != PlayerStatus.FOLDED:
             player.status = PlayerStatus.ALLIN
-
+     
         self.game_pointer = (self.game_pointer + 1) % self.num_players
 
         if player.status == PlayerStatus.ALLIN:
@@ -118,9 +118,12 @@ class NolimitholdemRound:
             self.not_playing_num += 1
 
         # Skip the folded players
-        for i, player in enumerate(players):
-            print(f"Player {i}: Status = {player.status}")
+        folded_count = sum(player.status == PlayerStatus.FOLDED for player in players)
+
         while players[self.game_pointer].status == PlayerStatus.FOLDED:
+            if folded_count == len(players):
+            print("All players have folded. Ending round or game.")
+                break
             self.game_pointer = (self.game_pointer + 1) % self.num_players
 
         return self.game_pointer

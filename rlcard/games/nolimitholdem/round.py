@@ -118,6 +118,8 @@ class NolimitholdemRound:
             self.not_playing_num += 1
 
         # Skip the folded players
+        for i, player in enumerate(players):
+            print(f"Player {i}: Status = {player.status}")
         while players[self.game_pointer].status == PlayerStatus.FOLDED:
             self.game_pointer = (self.game_pointer + 1) % self.num_players
 

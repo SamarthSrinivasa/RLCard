@@ -307,14 +307,16 @@ class DQNAgent(object):
             action (int): an action id
         '''
         q_values = self.predict(state)
-        epsilon = self.epsilons[min(self.total_t, self.epsilon_decay_steps-1)]
+        #epsilon = self.epsilons[min(self.total_t, self.epsilon_decay_steps-1)]
         legal_actions = list(state['legal_actions'].keys())
-        probs = np.ones(len(legal_actions), dtype=float) * epsilon / len(legal_actions)
+        #probs = np.ones(len(legal_actions), dtype=float) * epsilon / len(legal_actions)
         best_action_idx = legal_actions.index(np.argmax(q_values))
-        probs[best_action_idx] += (1.0 - epsilon)
-        action_idx = np.random.choice(np.arange(len(probs)), p=probs)
+        #probs[best_action_idx] += (1.0 - epsilon)
+        #action_idx = np.random.choice(np.arange(len(probs)), p=probs)
 
-        return legal_actions[action_idx]
+        #return legal_actions[action_idx]
+        return legal_actions[best_action_idx]
+
 
     def eval_step(self, state):
         ''' Predict the action for evaluation purpose.

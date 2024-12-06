@@ -52,6 +52,16 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import os
 
+def reset_all_noise(model):
+    """
+    Resets noise for all NoisyLinear layers in a model.
+    Args:
+        model (torch.nn.Module): The model containing NoisyLinear layers.
+    """
+    for module in model.modules():
+        if isinstance(module, NoisyLinear):
+            module.reset_noise()
+
 ######################## Your code ####################################
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 class NoisyLinear(nn.Module):

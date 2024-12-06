@@ -1,4 +1,4 @@
-''' DQN agent
+''' DQN agent Changed File to add learn functionality from DQN (from scratch) - Rerouted Predict and Estimator Functions - Samarth, Hallie, Ian 
 
 The code is derived from https://github.com/dennybritz/reinforcement-learning/blob/master/DQN/dqn.py
 

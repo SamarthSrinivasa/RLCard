@@ -38,7 +38,7 @@ from rlcard.utils.utils import remove_illegal
 Transition = namedtuple('Transition', ['state', 'action', 'reward', 'next_state', 'done', 'legal_actions'])
 
 
-class DQNAgent(object):
+class DQNAgent1(object):
     '''
     Approximate clone of rlcard.agents.dqn_agent.DQNAgent
     that depends on PyTorch instead of Tensorflow

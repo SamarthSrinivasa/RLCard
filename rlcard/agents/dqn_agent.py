@@ -87,8 +87,12 @@ class NoisyLinear(nn.Module):
         self.bias_epsilon.normal_()
     def forward(self, x):
         if self.training:
+            self.reset_noise()
             weight = self.weight_mu + self.weight_sigma * self.weight_epsilon
             bias = self.bias_mu + self.bias_sigma * self.bias_epsilon
+        else:
+            weight = self.weight_mu
+            bias = self.bias_mu
         return F.linear(x, weight, bias)
 
 # Simple NN with two hidden layers
@@ -103,6 +107,11 @@ class QNetwork(nn.Module):
         self.advantage_layer = NoisyLinear(fc3_units, a_size)
         #self.fc3 = nn.Linear(fc2_units, fc3_units)
         #self.fc4 = nn.Linear(fc3_units, a_size)
+
+        self.fc2.reset_noise()
+        self.fc3.reset_noise()
+        self.value_layer.reset_noise()
+        self.advantage_layer.reset_noise()
     def forward(self, state):
         """Perform forward propagation."""
 
@@ -124,7 +133,10 @@ class QNetwork(nn.Module):
         #x = self.fc3(x)
 
 
-
+    def reset_all_noise(model):
+        for module in model.modules():
+            if isinstance(module, NoisyLinear):
+                module.reset_noise()
     def reset_noise(self):
         self.value_layer.reset_noise()
         self.advantage_layer.reset_noise()
@@ -164,6 +176,10 @@ class TargetNetwork(nn.Module):
     def reset_noise(self):
         self.value_layer.reset_noise()
         self.advantage_layer.reset_noise()
+    def reset_all_noise(model):
+        for module in model.modules():
+            if isinstance(module, NoisyLinear):
+                module.reset_noise()
 
 
 class DQNAgent(object):
@@ -326,6 +342,10 @@ class DQNAgent(object):
         return masked_q_values
 
     def train(self):
+
+        reset_all_noise(self.q_estimator.qnet)
+        reset_all_noise(self.target_estimator.qnet)
+
         state_batch, action_batch, reward_batch, next_state_batch, done_batch, legal_actions_batch = self.memory.sample()
     
         # Calculate best next actions using Q-network (Double DQN)

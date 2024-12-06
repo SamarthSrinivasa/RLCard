@@ -37,6 +37,134 @@ from rlcard.utils.utils import remove_illegal
 
 Transition = namedtuple('Transition', ['state', 'action', 'reward', 'next_state', 'done', 'legal_actions'])
 
+import torch # will use pyTorch to handle NN
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+import numpy as np
+from collections import deque
+import random
+from random import sample
+
+import matplotlib
+import matplotlib.pyplot as plt
+
+from pathlib import Path
+import os
+
+######################## Your code ####################################
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+class NoisyLinear(nn.Module):
+    def __init__(self, in_features, out_features, sigma_init=0.5):
+        super(NoisyLinear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.sigma_init = sigma_init
+
+        # Learnable parameters
+        self.weight_mu = nn.Parameter(torch.empty(out_features, in_features))
+        self.weight_sigma = nn.Parameter(torch.empty(out_features, in_features))
+        self.bias_mu = nn.Parameter(torch.empty(out_features))
+        self.bias_sigma = nn.Parameter(torch.empty(out_features))
+
+        # Fixed noise parameters
+        self.register_buffer("weight_epsilon", torch.empty(out_features, in_features))
+        self.register_buffer("bias_epsilon", torch.empty(out_features))
+
+        # Initialization
+        self.reset_parameters()
+        self.reset_noise()
+
+    def reset_parameters(self):
+        bound = 1 / np.sqrt(self.in_features)
+        self.weight_mu.data.uniform_(-bound, bound)
+        self.bias_mu.data.uniform_(-bound, bound)
+        self.weight_sigma.data.fill_(self.sigma_init / np.sqrt(self.in_features))
+        self.bias_sigma.data.fill_(self.sigma_init / np.sqrt(self.out_features))
+
+    def reset_noise(self):
+        self.weight_epsilon.normal_()
+        self.bias_epsilon.normal_()
+    def forward(self, x):
+        if self.training:
+            weight = self.weight_mu + self.weight_sigma * self.weight_epsilon
+            bias = self.bias_mu + self.bias_sigma * self.bias_epsilon
+        return F.linear(x, weight, bias)
+
+# Simple NN with two hidden layers
+class QNetwork(nn.Module):
+    def __init__(self, s_size,  a_size, fc1_units=64, fc2_units=64, fc3_units=64):
+    #def __init__(self, s_size,  a_size, fc1_units=256, fc2_units=128):
+        super(QNetwork, self).__init__()
+        self.fc1 = nn.Linear(s_size, fc1_units)
+        self.fc2 = NoisyLinear(fc1_units, fc2_units)
+        self.fc3 = NoisyLinear(fc2_units, fc3_units)
+        self.value_layer = NoisyLinear(fc3_units, 1)
+        self.advantage_layer = NoisyLinear(fc3_units, a_size)
+        #self.fc3 = nn.Linear(fc2_units, fc3_units)
+        #self.fc4 = nn.Linear(fc3_units, a_size)
+    def forward(self, state):
+        """Perform forward propagation."""
+
+        x = state
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x,
+                             device=device,
+                             dtype=torch.float32)
+            x = x.unsqueeze(0)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        value = self.value_layer(x)
+        advantage = self.advantage_layer(x)
+        q_values = value + (advantage - advantage.mean(dim=1, keepdim=True))
+        return q_values
+
+        #x = self.fc4(x)
+        #x = self.fc3(x)
+
+
+
+    def reset_noise(self):
+        self.value_layer.reset_noise()
+        self.advantage_layer.reset_noise()
+
+class TargetNetwork(nn.Module):
+    def __init__(self, s_size,  a_size, fc1_units=64, fc2_units=64, fc3_units=64):
+    #def __init__(self, s_size,  a_size, fc1_units=256, fc2_units=128):
+        super(TargetNetwork, self).__init__()
+        self.fc1 = nn.Linear(s_size, fc1_units)
+        self.fc2 = NoisyLinear(fc1_units, fc2_units)
+        self.fc3 = NoisyLinear(fc2_units, fc3_units)
+        self.value_layer = NoisyLinear(fc3_units, 1)
+        self.advantage_layer = NoisyLinear(fc3_units, a_size)
+        #self.fc3 = nn.Linear(fc2_units, fc3_units)
+        #self.fc4 = nn.Linear(fc3_units, a_size)
+
+    def forward(self, state):
+        """Perform forward propagation."""
+
+        x = state
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x,
+                             device=device,
+                             dtype=torch.float32)
+            x = x.unsqueeze(0)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        #x = self.fc4(x)
+        #x = self.fc3(x)
+        value = self.value_layer(x)
+        advantage = self.advantage_layer(x)
+        q_values = value + (advantage - advantage.mean(dim=1, keepdim=True))
+        return q_values
+
+
+    def reset_noise(self):
+        self.value_layer.reset_noise()
+        self.advantage_layer.reset_noise()
+
 
 class DQNAgent(object):
     '''
@@ -112,10 +240,13 @@ class DQNAgent(object):
         self.epsilons = np.linspace(epsilon_start, epsilon_end, epsilon_decay_steps)
 
         # Create estimators
-        self.q_estimator = Estimator(num_actions=num_actions, learning_rate=learning_rate, state_shape=state_shape, \
-            mlp_layers=mlp_layers, device=self.device)
-        self.target_estimator = Estimator(num_actions=num_actions, learning_rate=learning_rate, state_shape=state_shape, \
-            mlp_layers=mlp_layers, device=self.device)
+        self.q_estimator = Estimator(
+            s_size=np.prod(state_shape),
+            a_size=num_actions,
+            learning_rate=learning_rate,
+            device=self.device
+        )
+        self.target_estimator = deepcopy(self.q_estimator)
 
         # Create replay memory
         self.memory = Memory(replay_memory_size, batch_size)
@@ -195,46 +326,28 @@ class DQNAgent(object):
         return masked_q_values
 
     def train(self):
-        ''' Train the network
-
-        Returns:
-            loss (float): The loss of the current batch.
-        '''
         state_batch, action_batch, reward_batch, next_state_batch, done_batch, legal_actions_batch = self.memory.sample()
-
+    
         # Calculate best next actions using Q-network (Double DQN)
         q_values_next = self.q_estimator.predict_nograd(next_state_batch)
-        legal_actions = []
-        for b in range(self.batch_size):
-            legal_actions.extend([i + b * self.num_actions for i in legal_actions_batch[b]])
-        masked_q_values = -np.inf * np.ones(self.num_actions * self.batch_size, dtype=float)
-        masked_q_values[legal_actions] = q_values_next.flatten()[legal_actions]
-        masked_q_values = masked_q_values.reshape((self.batch_size, self.num_actions))
-        best_actions = np.argmax(masked_q_values, axis=1)
-
+        best_actions = np.argmax(q_values_next, axis=1)
+    
         # Evaluate best next actions using Target-network (Double DQN)
         q_values_next_target = self.target_estimator.predict_nograd(next_state_batch)
         target_batch = reward_batch + np.invert(done_batch).astype(np.float32) * \
             self.discount_factor * q_values_next_target[np.arange(self.batch_size), best_actions]
-
+    
         # Perform gradient descent update
         state_batch = np.array(state_batch)
-
         loss = self.q_estimator.update(state_batch, action_batch, target_batch)
-        print('\rINFO - Step {}, rl-loss: {}'.format(self.total_t, loss), end='')
-
-        # Update the target estimator
+    
+        print(f'\rINFO - Step {self.total_t}, rl-loss: {loss}', end='')
+    
+        # Update the target estimator periodically
         if self.train_t % self.update_target_estimator_every == 0:
-            self.target_estimator = deepcopy(self.q_estimator)
+            self.q_estimator.update_target_network()
             print("\nINFO - Copied model parameters to target network.")
 
-        self.train_t += 1
-
-        if self.save_path and self.train_t % self.save_every == 0:
-            # To preserve every checkpoint separately, 
-            # add another argument to the function call parameterized by self.train_t
-            self.save_checkpoint(self.save_path)
-            print("\nINFO - Saved model checkpoint.")
 
 
     def feed_memory(self, state, action, reward, next_state, legal_actions, done):
@@ -330,130 +443,104 @@ class DQNAgent(object):
         torch.save(self.checkpoint_attributes(), os.path.join(path, filename))
 
 
-class Estimator(object):
-    '''
-    Approximate clone of rlcard.agents.dqn_agent.Estimator that
-    uses PyTorch instead of Tensorflow.  All methods input/output np.ndarray.
-
-    Q-Value Estimator neural network.
-    This network is used for both the Q-Network and the Target Network.
-    '''
-
-    def __init__(self, num_actions=2, learning_rate=0.001, state_shape=None, mlp_layers=None, device=None):
-        ''' Initilalize an Estimator object.
-
+class Estimator:
+    def __init__(self, s_size, a_size, learning_rate=0.001, device=None):
+        """
+        Initialize an Estimator object.
         Args:
-            num_actions (int): the number output actions
-            state_shape (list): the shape of the state space
-            mlp_layers (list): size of outputs of mlp layers
-            device (torch.device): whether to use cpu or gpu
-        '''
-        self.num_actions = num_actions
-        self.learning_rate=learning_rate
-        self.state_shape = state_shape
-        self.mlp_layers = mlp_layers
-        self.device = device
+            s_size (int): The size of the state space.
+            a_size (int): The size of the action space.
+            learning_rate (float): Learning rate for optimization.
+            device (torch.device): The device to use (CPU or GPU).
+        """
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # set up Q model and place it in eval mode
-        qnet = EstimatorNetwork(num_actions, state_shape, mlp_layers)
-        qnet = qnet.to(self.device)
-        self.qnet = qnet
-        self.qnet.eval()
+        # Initialize the Q-network and target network
+        self.qnet = QNetwork(s_size, a_size).to(self.device)
+        self.target_qnet = TargetNetwork(s_size, a_size).to(self.device)
 
-        # initialize the weights using Xavier init
-        for p in self.qnet.parameters():
-            if len(p.data.shape) > 1:
-                nn.init.xavier_uniform_(p.data)
+        # Set loss function and optimizer
+        self.optimizer = torch.optim.Adam(self.qnet.parameters(), lr=learning_rate)
+        self.loss_fn = nn.MSELoss()
 
-        # set up loss function
-        self.mse_loss = nn.MSELoss(reduction='mean')
-
-        # set up optimizer
-        self.optimizer =  torch.optim.Adam(self.qnet.parameters(), lr=self.learning_rate)
-
-    def predict_nograd(self, s):
-        ''' Predicts action values, but prediction is not included
-            in the computation graph.  It is used to predict optimal next
-            actions in the Double-DQN algorithm.
-
+    def predict_nograd(self, states):
+        """
+        Predict Q-values without tracking gradients (used for target calculation).
         Args:
-          s (np.ndarray): (batch, state_len)
-
+            states (np.ndarray): Batch of states.
         Returns:
-          np.ndarray of shape (batch_size, NUM_VALID_ACTIONS) containing the estimated
-          action values.
-        '''
+            np.ndarray: Predicted Q-values.
+        """
+        self.qnet.eval()
         with torch.no_grad():
-            s = torch.from_numpy(s).float().to(self.device)
-            q_as = self.qnet(s).cpu().numpy()
-        return q_as
+            states_tensor = torch.tensor(states, dtype=torch.float32).to(self.device)
+            q_values = self.qnet(states_tensor).cpu().numpy()
+        return q_values
 
-    def update(self, s, a, y):
-        ''' Updates the estimator towards the given targets.
-            In this case y is the target-network estimated
-            value of the Q-network optimal actions, which
-            is labeled y in Algorithm 1 of Minh et al. (2015)
-
+    def update(self, states, actions, targets):
+        """
+        Update the Q-network using the given targets.
         Args:
-          s (np.ndarray): (batch, state_shape) state representation
-          a (np.ndarray): (batch,) integer sampled actions
-          y (np.ndarray): (batch,) value of optimal actions according to Q-target
-
+            states (np.ndarray): Batch of states.
+            actions (np.ndarray): Batch of actions.
+            targets (np.ndarray): Batch of target Q-values.
         Returns:
-          The calculated loss on the batch.
-        '''
-        self.optimizer.zero_grad()
-
+            float: Loss for the current update.
+        """
         self.qnet.train()
+        states_tensor = torch.tensor(states, dtype=torch.float32).to(self.device)
+        actions_tensor = torch.tensor(actions, dtype=torch.int64).to(self.device)
+        targets_tensor = torch.tensor(targets, dtype=torch.float32).to(self.device)
 
-        s = torch.from_numpy(s).float().to(self.device)
-        a = torch.from_numpy(a).long().to(self.device)
-        y = torch.from_numpy(y).float().to(self.device)
+        # Compute Q-values for the given actions
+        q_values = self.qnet(states_tensor)
+        q_values = q_values.gather(1, actions_tensor.unsqueeze(-1)).squeeze(-1)
 
-        # (batch, state_shape) -> (batch, num_actions)
-        q_as = self.qnet(s)
+        # Compute loss
+        loss = self.loss_fn(q_values, targets_tensor)
 
-        # (batch, num_actions) -> (batch, )
-        Q = torch.gather(q_as, dim=-1, index=a.unsqueeze(-1)).squeeze(-1)
-
-        # update model
-        batch_loss = self.mse_loss(Q, y)
-        batch_loss.backward()
+        # Perform optimization
+        self.optimizer.zero_grad()
+        loss.backward()
         self.optimizer.step()
-        batch_loss = batch_loss.item()
 
-        self.qnet.eval()
+        return loss.item()
 
-        return batch_loss
-    
+    def update_target_network(self):
+        """
+        Update the target network by copying weights from the Q-network.
+        """
+        self.target_qnet.load_state_dict(self.qnet.state_dict())
+
     def checkpoint_attributes(self):
-        ''' Return the attributes needed to restore the model from a checkpoint
-        '''
+        """
+        Return the checkpoint attributes for saving/restoring the model.
+        """
         return {
             'qnet': self.qnet.state_dict(),
+            'target_qnet': self.target_qnet.state_dict(),
             'optimizer': self.optimizer.state_dict(),
-            'num_actions': self.num_actions,
-            'learning_rate': self.learning_rate,
-            'state_shape': self.state_shape,
-            'mlp_layers': self.mlp_layers,
-            'device': self.device
         }
-        
+
     @classmethod
-    def from_checkpoint(cls, checkpoint):
-        ''' Restore the model from a checkpoint
-        '''
-        estimator = cls(
-            num_actions=checkpoint['num_actions'],
-            learning_rate=checkpoint['learning_rate'],
-            state_shape=checkpoint['state_shape'],
-            mlp_layers=checkpoint['mlp_layers'],
-            device=checkpoint['device']
-        )
-        
+    def from_checkpoint(cls, checkpoint, s_size, a_size, learning_rate=0.001, device=None):
+        """
+        Restore an Estimator object from a checkpoint.
+        Args:
+            checkpoint (dict): Checkpoint attributes.
+            s_size (int): State size.
+            a_size (int): Action size.
+            learning_rate (float): Learning rate.
+            device (torch.device): Device to use.
+        Returns:
+            Estimator: Restored Estimator object.
+        """
+        estimator = cls(s_size, a_size, learning_rate, device)
         estimator.qnet.load_state_dict(checkpoint['qnet'])
+        estimator.target_qnet.load_state_dict(checkpoint['target_qnet'])
         estimator.optimizer.load_state_dict(checkpoint['optimizer'])
         return estimator
+
 
 
 class EstimatorNetwork(nn.Module):
